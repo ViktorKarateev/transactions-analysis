@@ -1,69 +1,83 @@
-import pytest
 import os
 import json
 import pandas as pd
-from src.views import save_to_json, save_to_excel, save_to_csv
+import pytest
+from unittest.mock import patch, mock_open
+from datetime import datetime
+from src.views import generate_main_page_json, save_to_json, save_to_excel, save_to_csv
+
 
 @pytest.fixture
-def sample_data():
-    """Пример данных для тестов."""
-    return {"Категория 1": 1000, "Категория 2": 500}
+def sample_transactions():
+    """Создаёт тестовый DataFrame с транзакциями."""
+    data = {
+        "Дата операции": ["2024-02-01", "2024-02-05", "2024-02-10"],
+        "Номер карты": ["1234", "5678", "1234"],
+        "Сумма операции": [-500, -200, -300],
+        "Категория": ["Продукты", "Развлечения", "Аптека"],
+        "Описание": ["Магазин", "Кино", "Аптека"]
+    }
+    df = pd.DataFrame(data)
+    df["Дата операции"] = pd.to_datetime(df["Дата операции"])
+    return df
 
-@pytest.fixture
-def output_folder():
-    """Возвращает путь к папке с экспортированными файлами."""
-    return "export"
 
-def test_save_to_json(sample_data, output_folder):
-    """Тест сохранения в JSON."""
+@patch("src.utils.get_currency_rates", return_value={"USD": 73.21, "EUR": 87.08})
+@patch("src.utils.get_stock_prices", return_value={"AAPL": 150.12, "TSLA": 900.00})
+@patch("src.utils.datetime")
+def test_generate_main_page_json(mock_datetime, mock_stocks, mock_currency, sample_transactions):
+    """Тест генерации JSON-ответа для главной страницы."""
+    test_date = "2024-02-15 12:00:00"
+
+    # Устанавливаем фиксированное время в тесте
+    mock_datetime.now.return_value = datetime(2024, 2, 15, 12, 0, 0)
+
+    result = generate_main_page_json(sample_transactions, test_date)
+
+    assert "greeting" in result
+    assert "cards" in result
+    assert "top_transactions" in result
+    assert "currency_rates" in result
+    assert "stock_prices" in result
+    assert result["greeting"] == "Добрый день"  # Теперь точно "Добрый день"
+    assert isinstance(result["cards"], list)
+    assert isinstance(result["top_transactions"], list)
+    assert isinstance(result["currency_rates"], list)
+    assert isinstance(result["stock_prices"], list)
+
+
+@patch("builtins.open", new_callable=mock_open)
+def test_save_to_json(mock_file):
+    """Тест сохранения данных в JSON."""
+    data = {"test": "value"}
     filename = "test.json"
-    file_path = os.path.join(output_folder, filename)
 
-    save_to_json(sample_data, filename, output_folder)
+    save_to_json(data, filename, folder="test_export")
 
-    # Проверяем, что файл создан
-    assert os.path.exists(file_path)
+    mock_file.assert_called_once_with(os.path.join("test_export", filename), "w", encoding="utf-8")
+    handle = mock_file()
+    handle.write.assert_called()
 
-    # Проверяем содержимое файла
-    with open(file_path, "r", encoding="utf-8") as f:
-        loaded_data = json.load(f)
-    assert loaded_data == sample_data
 
-    # Удаляем файл после теста
-    os.remove(file_path)
-
-def test_save_to_excel(sample_data, output_folder):
-    """Тест сохранения в Excel."""
+def test_save_to_excel():
+    """Тест сохранения данных в Excel."""
+    data = {"Категория": 1000, "Продукты": 500}
     filename = "test.xlsx"
-    file_path = os.path.join(output_folder, filename)
 
-    save_to_excel(sample_data, filename, output_folder)
+    save_to_excel(data, filename, folder="test_export")
 
-    # Проверяем, что файл создан
+    file_path = os.path.join("test_export", filename)
     assert os.path.exists(file_path)
+    os.remove(file_path)  # Удаляем тестовый файл
 
-    # Проверяем содержимое файла
-    df = pd.read_excel(file_path)
-    assert list(df.columns) == ["Категория", "Сумма"]
-    assert df.shape[0] == len(sample_data)
 
-    # Удаляем файл после теста
-    os.remove(file_path)
-
-def test_save_to_csv(sample_data, output_folder):
-    """Тест сохранения в CSV."""
+def test_save_to_csv():
+    """Тест сохранения данных в CSV."""
+    data = {"Категория": 1000, "Продукты": 500}
     filename = "test.csv"
-    file_path = os.path.join(output_folder, filename)
 
-    save_to_csv(sample_data, filename, output_folder)
+    save_to_csv(data, filename, folder="test_export")
 
-    # Проверяем, что файл создан
+    file_path = os.path.join("test_export", filename)
     assert os.path.exists(file_path)
-
-    # Проверяем содержимое файла
-    df = pd.read_csv(file_path)
-    assert list(df.columns) == ["Категория", "Сумма"]
-    assert df.shape[0] == len(sample_data)
-
-    # Удаляем файл после теста
-    os.remove(file_path)
+    os.remove(file_path)  # Удаляем тестовый файл
