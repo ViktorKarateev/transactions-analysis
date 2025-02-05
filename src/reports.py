@@ -30,17 +30,8 @@ def filter_transactions(
 ) -> pd.DataFrame:
     """
     Фильтрует транзакции по дате, категории и сумме.
-
-    :param transactions: DataFrame с колонками ["Дата операции", "Категория", "Сумма операции"]
-    :param start_date: Начальная дата в формате 'YYYY-MM-DD'
-    :param end_date: Конечная дата в формате 'YYYY-MM-DD'
-    :param category: Фильтрация по категории (например, 'Супермаркеты')
-    :param min_amount: Минимальная сумма операции
-    :param max_amount: Максимальная сумма операции
-    :return: Отфильтрованный DataFrame
     """
-    transactions["Дата операции"] = pd.to_datetime(transactions["Дата операции"], format="%d.%m.%Y %H:%M:%S",
-                                                   errors="coerce")
+    transactions["Дата операции"] = pd.to_datetime(transactions["Дата операции"], format="%Y-%m-%d", errors="coerce")
 
     if start_date:
         transactions = transactions[transactions["Дата операции"] >= pd.to_datetime(start_date)]
