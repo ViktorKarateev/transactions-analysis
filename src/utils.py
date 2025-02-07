@@ -59,59 +59,62 @@ def request_stocks():
     return [stock.strip() for stock in stocks.split(",")]
 
 
-def get_currency_rates():
-    """
-    Получает текущие курсы валют через API и учитывает настройки пользователя.
-    """
-    settings = load_json("user_settings.json")
-    user_currencies = settings.get("user_currencies", ["USD", "EUR"])
+def get_currency_rates(currency_list=None):
+    """ Получение курсов валют через API """
+    if currency_list is None:
+        currency_list = ["USD", "EUR", "RUB"]  # Валюты по умолчанию
+    print(f"Запрашиваем курсы валют для: {currency_list}")
 
-    api_key = os.getenv("API_LAYER_KEY")
-    if not api_key:
-        print("⚠ API ключ не найден. Проверьте .env файл.")
-        return None
-
-    url = "https://api.apilayer.com/exchangerates_data/latest?base=USD"
-    headers = {"apikey": api_key}
+    api_url = "https://api.exchangerate-api.com/v4/latest/USD"  # API для валют
+    rates = {}
 
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+        response = requests.get(api_url, timeout=10)
         data = response.json()
 
-        rates = {currency: data["rates"].get(currency, "N/A") for currency in user_currencies}
-        return rates
-    except requests.RequestException as e:
-        print(f"Ошибка запроса к API: {e}")
-        return None
+        if "rates" in data:
+            for currency in currency_list:
+                rates[currency] = data["rates"].get(currency, "N/A")  # Если нет валюты, ставим "N/A"
+        else:
+            print("Ошибка: Нет данных о курсах валют")
+            rates = {cur: "N/A" for cur in currency_list}
+
+    except Exception as e:
+        print(f"Ошибка получения курсов валют: {e}")
+        rates = {cur: "N/A" for cur in currency_list}  # Если ошибка, ставим "N/A"
+
+    return rates
 
 
-import yfinance as yf
-
-def get_stock_prices():
+def get_stock_prices(stocks):
     """
-    Получает текущие цены акций из Yahoo Finance API.
+    Получает текущие цены акций из Alpha Vantage API.
     """
-    settings = load_json("user_settings.json")
-    user_stocks = settings.get("user_stocks", ["AAPL", "AMZN", "GOOGL", "MSFT", "TSLA"])
-
+    api_key = os.getenv("ALPHA_VANTAGE_KEY", "55S27TWDBK01EW51")  # API-ключ
+    base_url = "https://www.alphavantage.co/query"
     stock_data = {}
-    for stock in user_stocks:
+
+    for stock in stocks:
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": stock,
+            "apikey": api_key
+        }
         try:
-            print(f"Запрос к Yahoo Finance для: {stock}")
-            ticker = yf.Ticker(stock)
-            stock_info = ticker.history(period="1d")  # Получаем данные за последний день
-            if not stock_info.empty:
-                stock_data[stock] = stock_info['Close'][0]  # Цена закрытия акции
+            response = requests.get(base_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            if "Time Series (Daily)" in data:
+                last_date = sorted(data["Time Series (Daily)"].keys())[-1]
+                stock_data[stock] = float(data["Time Series (Daily)"][last_date]["4. close"])
             else:
-                stock_data[stock] = "Нет данных"
-        except Exception as e:
-            print(f"Ошибка запроса к Yahoo Finance для {stock}: {e}")
+                stock_data[stock] = "Ошибка при запросе"
+        except requests.RequestException as e:
             stock_data[stock] = "Ошибка при запросе"
+            print(f"Ошибка запроса к API для {stock}: {e}")
 
     return stock_data
-
-
 
 
 def get_greeting():

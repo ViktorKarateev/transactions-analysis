@@ -1,36 +1,61 @@
 import os
+import sys
 import json
 import pandas as pd
 from datetime import datetime
-from src.utils import get_greeting, get_currency_rates, get_stock_prices
 from src.file_readers import load_transactions
+from src.reports import get_top_expenses
+from src.services import calculate_cashback, calculate_rounding_savings
+from src.utils import get_currency_rates, get_stock_prices, load_json, get_greeting
+from src.views import save_to_json
 
 
-def generate_main_page_json(transactions: pd.DataFrame, date_str: str) -> dict:
-    """
-    Генерирует JSON-ответ для главной страницы.
+def main(input_date: str):
+    print("Запуск программы...")
 
-    :param transactions: DataFrame с транзакциями.
-    :param date_str: Строка с датой в формате 'YYYY-MM-DD'.
-    :return: Словарь с JSON-ответом.
-    """
+    # Загружаем транзакции
+    transactions_file = os.path.join("data", "operations.xlsx")
+    print(f"Загружаем файл: {transactions_file}")
+    transactions = load_transactions(transactions_file)
+
+    if transactions.empty:
+        print("Ошибка: не удалось загрузить транзакции.")
+        return
+
+    print(f"Успешно загружено {len(transactions)} транзакций.")
+
     try:
-        current_date = datetime.strptime(date_str, "%Y-%m-%d")
+        current_date = datetime.strptime(input_date, "%Y-%m-%d %H:%M:%S")
     except ValueError:
-        return {"error": "Неверный формат даты. Используйте YYYY-MM-DD."}
+        print("Ошибка: Некорректный формат даты. Используйте YYYY-MM-DD HH:MM:SS.")
+        return
+
+    year = current_date.year
+    month = current_date.month
 
     start_date = current_date.replace(day=1)
+    print(f"Фильтр данных с {start_date.strftime('%Y-%m-%d')} по {current_date.strftime('%Y-%m-%d')}")
 
-    transactions["Дата операции"] = pd.to_datetime(transactions["Дата операции"], format="%d.%m.%Y", errors="coerce")
-    transactions["Сумма операции"] = pd.to_numeric(transactions["Сумма операции"], errors="coerce")
+    transactions["Дата операции"] = pd.to_datetime(transactions["Дата операции"], dayfirst=True, errors="coerce")
 
+    # Проверка диапазона дат в файле
+    print(f"Диапазон дат в файле: {transactions['Дата операции'].min()} - {transactions['Дата операции'].max()}")
+
+    # Исправляем `SettingWithCopyWarning`
     filtered_transactions = transactions[
-        (transactions["Дата операции"] >= start_date) &
-        (transactions["Дата операции"] <= current_date)
-        ]
+        (transactions["Дата операции"] >= start_date) & (transactions["Дата операции"] <= current_date)
+    ].copy()
+
+    print(f"Количество транзакций после фильтрации: {len(filtered_transactions)}")
+    print(filtered_transactions.head())
+
+    greeting = get_greeting()
+    filtered_transactions["Номер карты"] = filtered_transactions["Номер карты"].fillna("").astype(str)
+    filtered_transactions["last_digits"] = filtered_transactions["Номер карты"].apply(lambda x: x[-4:])
+    filtered_transactions["Сумма операции"] = pd.to_numeric(filtered_transactions["Сумма операции"], errors="coerce")
 
     cards_summary = (
-        filtered_transactions.groupby("Номер карты")["Сумма операции"]
+        filtered_transactions.groupby("last_digits")["Сумма операции"]
         .sum()
         .reset_index()
     )
@@ -38,58 +63,55 @@ def generate_main_page_json(transactions: pd.DataFrame, date_str: str) -> dict:
 
     cards_info = cards_summary.to_dict(orient="records")
 
-    filtered_transactions.loc[:, "Сумма операции"] = pd.to_numeric(filtered_transactions["Сумма операции"],
-                                                                   errors="coerce")
-    top_transactions = (
-        filtered_transactions.nlargest(5, "Сумма операции")
-        [["Дата операции", "Сумма операции", "Категория", "Описание"]]
-        .to_dict(orient="records")
-    )
+    top_transactions = get_top_expenses(filtered_transactions).to_dict(orient="records")
 
-    # Преобразуем Timestamp в строки
-    for transaction in top_transactions:
-        transaction["Дата операции"] = transaction["Дата операции"].strftime('%Y-%m-%d')
+    # Получаем курсы валют
+    try:
+        currency_rates = get_currency_rates()
+        if not isinstance(currency_rates, dict):
+            raise ValueError("Некорректный формат данных валют")
+    except Exception as e:
+        print(f"Ошибка получения курсов валют: {e}")
+        currency_rates = {"USD": 1, "EUR": 0.96842}
 
-    currency_rates = get_currency_rates() or {}
-    stock_prices = get_stock_prices() or {}
+    # Загружаем настройки пользователя
+    settings = load_json("user_settings.json")
+    stock_symbols = settings.get("user_stocks", ["AAPL", "TSLA", "GOOGL"])
 
-    response = {
-        "greeting": get_greeting(),
-        "cards": cards_info,
-        "top_transactions": top_transactions,
+    # Получаем цены акций (не исправляем ошибку запросов!)
+    try:
+        stock_prices = get_stock_prices(stock_symbols)
+        if not isinstance(stock_prices, dict):
+            raise ValueError("Некорректный формат данных акций")
+        print(f"Ответ API: {stock_prices}")  # Для отладки
+    except Exception as e:
+        print(f"Ошибка получения цен на акции: {e}")
+        stock_prices = {symbol: "Ошибка при запросе" for symbol in stock_symbols}
+
+    # Рассчитываем кешбэк по категориям
+    cashback_data = calculate_cashback(filtered_transactions, year, month)
+
+    # Рассчитываем отложенные деньги в инвесткопилку
+    investment_savings = calculate_rounding_savings(filtered_transactions, year, month, rounding_step=50)
+
+    # Формируем JSON-данные
+    main_page_data = {
+        "greeting": greeting,
+        "cards": cards_info if cards_info else "Нет данных",
+        "top_transactions": top_transactions if top_transactions else "Нет транзакций",
         "currency_rates": [{"currency": k, "rate": v} for k, v in currency_rates.items()],
-        "stock_prices": [{"stock": k, "price": v} for k, v in stock_prices.items()]
+        "stock_prices": [{"stock": k, "price": v} for k, v in stock_prices.items()],
+        "cashback": cashback_data,
+        "investment_savings": investment_savings
     }
 
-    return response
+    # Исправляем ошибку Timestamp
+    json_data = json.loads(json.dumps(main_page_data, default=str))
 
+    # Выводим JSON для проверки
+    print(json.dumps(json_data, indent=4, ensure_ascii=False))
 
-def main():
-    print(get_greeting())  # Печатаем приветствие
-    while True:
-        # Запрашиваем дату для анализа
-        date_str = input("Введите дату в формате 'YYYY-MM-DD': ")
+    # Сохраняем JSON
+    save_to_json(json_data, "main_page.json")
+    print("JSON успешно сохранен: main_page.json")
 
-        # Проверяем формат даты
-        try:
-            datetime.strptime(date_str, "%Y-%m-%d")
-            break  # Если формат даты корректный, выходим из цикла
-        except ValueError:
-            print("Неверный формат даты. Используйте YYYY-MM-DD.")
-
-    # Загрузка транзакций из Excel-файла
-    transactions = load_transactions("data/operations.xlsx")
-
-    if transactions.empty:
-        print("Ошибка: не удалось загрузить транзакции.")
-        return
-
-    # Генерация отчета
-    json_response = generate_main_page_json(transactions, date_str)
-
-    # Пример вывода результата
-    print(json.dumps(json_response, indent=4, ensure_ascii=False))
-
-
-if __name__ == "__main__":
-    main()
