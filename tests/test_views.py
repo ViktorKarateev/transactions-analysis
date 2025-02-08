@@ -9,7 +9,7 @@ from src.views import generate_main_page_json, save_to_json, save_to_excel, save
 
 @pytest.fixture
 def sample_transactions():
-    """Создаёт тестовый DataFrame с транзакциями."""
+    """Создает тестовый DataFrame с транзакциями."""
     data = {
         "Дата операции": ["2024-02-01", "2024-02-05", "2024-02-10"],
         "Номер карты": ["1234", "5678", "1234"],
@@ -22,30 +22,49 @@ def sample_transactions():
     return df
 
 
-@patch("src.utils.get_currency_rates", return_value={"USD": 73.21, "EUR": 87.08})
-@patch("src.utils.get_stock_prices", return_value={"AAPL": 150.12, "TSLA": 900.00})
-@patch("src.utils.datetime")
-def test_generate_main_page_json(mock_datetime, mock_stocks, mock_currency, sample_transactions):
+@patch("src.views.get_stock_prices")
+@patch("src.views.get_currency_rates")
+@patch("src.views.get_greeting")
+def test_generate_main_page_json(mock_greeting, mock_currency, mock_stocks, sample_transactions):
     """Тест генерации JSON-ответа для главной страницы."""
-    test_date = "2024-02-15 12:00:00"
+    # Подготовка тестовых данных
+    test_date = "2024-02-15"
+    test_stocks = ["AAPL", "TSLA", "GOOGL"]
 
-    # Устанавливаем фиксированное время в тесте
-    mock_datetime.now.return_value = datetime(2024, 2, 15, 12, 0, 0)
+    # Устанавливаем фиксированные значения для моков
+    mock_greeting.return_value = "Добрый день"
+    mock_currency.return_value = {"USD": 73.21, "EUR": 87.08}
+    mock_stocks.return_value = {
+        "AAPL": 227.63,
+        "TSLA": 361.62,
+        "GOOGL": 185.34
+    }
 
-    result = generate_main_page_json(sample_transactions, test_date)
+    # Вызываем функцию с передачей списка акций
+    result = generate_main_page_json(transactions=sample_transactions, date_str=test_date, stocks=test_stocks)
 
-    assert "greeting" in result
-    assert "cards" in result
-    assert "top_transactions" in result
-    assert "currency_rates" in result
-    assert "stock_prices" in result
-    assert result["greeting"] == "Добрый день"  # Теперь точно "Добрый день"
+    # Проверяем, что mock_stocks был вызван с правильными параметрами
+    mock_stocks.assert_called_once_with(stocks=test_stocks)
+
+    # Проверяем корректность результата
+    assert result["greeting"] == "Добрый день"
     assert isinstance(result["cards"], list)
     assert isinstance(result["top_transactions"], list)
     assert isinstance(result["currency_rates"], list)
     assert isinstance(result["stock_prices"], list)
 
+    # Проверяем данные об акциях
+    stock_prices = {item["stock"]: item["price"] for item in result["stock_prices"]}
+    assert stock_prices["AAPL"] == 227.63
+    assert stock_prices["TSLA"] == 361.62
+    assert stock_prices["GOOGL"] == 185.34
 
+    # Проверяем валюты
+    currency_rates = {item["currency"]: item["rate"] for item in result["currency_rates"]}
+    assert currency_rates["USD"] == 73.21
+    assert currency_rates["EUR"] == 87.08
+
+# Пример теста для сохранения в JSON
 @patch("builtins.open", new_callable=mock_open)
 def test_save_to_json(mock_file):
     """Тест сохранения данных в JSON."""
@@ -58,7 +77,7 @@ def test_save_to_json(mock_file):
     handle = mock_file()
     handle.write.assert_called()
 
-
+# Пример теста для сохранения в Excel
 def test_save_to_excel():
     """Тест сохранения данных в Excel."""
     data = {"Категория": 1000, "Продукты": 500}
@@ -70,7 +89,7 @@ def test_save_to_excel():
     assert os.path.exists(file_path)
     os.remove(file_path)  # Удаляем тестовый файл
 
-
+# Пример теста для сохранения в CSV
 def test_save_to_csv():
     """Тест сохранения данных в CSV."""
     data = {"Категория": 1000, "Продукты": 500}

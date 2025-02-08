@@ -1,4 +1,10 @@
 {
-    "user_stocks": ["AAPL", "TSLA", "GOOGL"],
-    "preferred_currencies": ["USD", "EUR", "RUB"]
+    "user_currencies": [
+        "USD",
+        "EUR"
+    ],
+    "user_stocks": [
+        "AAPL",
+        "TSLA"
+    ]
 }

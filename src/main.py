@@ -30,24 +30,19 @@ def main(input_date: str):
         print("Ошибка: Некорректный формат даты. Используйте YYYY-MM-DD HH:MM:SS.")
         return
 
-    year = current_date.year
-    month = current_date.month
-
+    year, month = current_date.year, current_date.month
     start_date = current_date.replace(day=1)
     print(f"Фильтр данных с {start_date.strftime('%Y-%m-%d')} по {current_date.strftime('%Y-%m-%d')}")
 
     transactions["Дата операции"] = pd.to_datetime(transactions["Дата операции"], dayfirst=True, errors="coerce")
 
-    # Проверка диапазона дат в файле
     print(f"Диапазон дат в файле: {transactions['Дата операции'].min()} - {transactions['Дата операции'].max()}")
 
-    # Исправляем `SettingWithCopyWarning`
     filtered_transactions = transactions[
         (transactions["Дата операции"] >= start_date) & (transactions["Дата операции"] <= current_date)
     ].copy()
 
     print(f"Количество транзакций после фильтрации: {len(filtered_transactions)}")
-    print(filtered_transactions.head())
 
     greeting = get_greeting()
     filtered_transactions["Номер карты"] = filtered_transactions["Номер карты"].fillna("").astype(str)
@@ -78,23 +73,24 @@ def main(input_date: str):
     settings = load_json("user_settings.json")
     stock_symbols = settings.get("user_stocks", ["AAPL", "TSLA", "GOOGL"])
 
-    # Получаем цены акций (не исправляем ошибку запросов!)
+    # Получаем цены акций
     try:
         stock_prices = get_stock_prices(stock_symbols)
         if not isinstance(stock_prices, dict):
             raise ValueError("Некорректный формат данных акций")
-        print(f"Ответ API: {stock_prices}")  # Для отладки
+        print(f"Ответ API: {stock_prices}")
     except Exception as e:
         print(f"Ошибка получения цен на акции: {e}")
         stock_prices = {symbol: "Ошибка при запросе" for symbol in stock_symbols}
 
-    # Рассчитываем кешбэк по категориям
+    #  Добавляем вызов сервисов
     cashback_data = calculate_cashback(filtered_transactions, year, month)
+    print(f" Кешбэк по категориям: {cashback_data}")
 
-    # Рассчитываем отложенные деньги в инвесткопилку
-    investment_savings = calculate_rounding_savings(filtered_transactions, year, month, rounding_step=50)
+    investment_savings = round(calculate_rounding_savings(filtered_transactions, year, month, 50), 2)
+    print(f" Сумма, отложенная в инвесткопилку: {investment_savings}")
 
-    # Формируем JSON-данные
+    # Вернул правильный `main_page_data`
     main_page_data = {
         "greeting": greeting,
         "cards": cards_info if cards_info else "Нет данных",
@@ -105,13 +101,16 @@ def main(input_date: str):
         "investment_savings": investment_savings
     }
 
-    # Исправляем ошибку Timestamp
     json_data = json.loads(json.dumps(main_page_data, default=str))
 
-    # Выводим JSON для проверки
     print(json.dumps(json_data, indent=4, ensure_ascii=False))
 
-    # Сохраняем JSON
     save_to_json(json_data, "main_page.json")
     print("JSON успешно сохранен: main_page.json")
 
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Использование: python -m src.main 'YYYY-MM-DD HH:MM:SS'")
+    else:
+        main(sys.argv[1])
